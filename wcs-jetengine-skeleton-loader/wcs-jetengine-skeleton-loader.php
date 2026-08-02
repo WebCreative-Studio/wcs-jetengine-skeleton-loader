@@ -2,7 +2,7 @@
 /**
  * Plugin Name: WCS JetEngine Skeleton Loader
  * Description: Добавляет опциональный скелетон-загрузчик карточек в Listing Grid JetEngine для Elementor.
- * Version: 1.0.2
+ * Version: 1.0.3
  * Requires at least: 6.0
  * Requires PHP: 7.2
  * Author: WebCreative Studio
@@ -14,7 +14,7 @@ defined( 'ABSPATH' ) || exit;
 
 final class WCS_JetEngine_Skeleton_Loader {
 
-	const VERSION = '1.0.2';
+	const VERSION = '1.0.3';
 	const PLUGIN_SLUG = 'wcs-jetengine-skeleton-loader';
 	const UPDATE_MANIFEST_URL = 'https://web-creative.studio/wcs-plugins-update/wcs-jetengine-skeleton-loader/metadata.json';
 	const UPDATE_CACHE_KEY = 'wcs_jetengine_skeleton_update_manifest';
