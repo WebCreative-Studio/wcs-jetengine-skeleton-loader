@@ -61,13 +61,98 @@
 		return 'wcs-skeleton-size:' + location.pathname + ':' + id + ':' + breakpoint();
 	}
 
-	function savedRatio( wrapper ) {
+	function savedMeasurement( wrapper ) {
 		try {
-			var saved = JSON.parse( sessionStorage.getItem( storageKey( wrapper ) ) || 'null' );
-			return saved && Number.isFinite( saved.ratio ) && saved.ratio > 0 ? saved.ratio : 0;
+			return JSON.parse( sessionStorage.getItem( storageKey( wrapper ) ) || 'null' );
 		} catch ( error ) {
-			return 0;
+			return null;
 		}
+	}
+
+	function validRect( rect ) {
+		return rect && [ 'left', 'top', 'width', 'height' ].every( function ( key ) {
+			return Number.isFinite( rect[ key ] ) && rect[ key ] >= 0 && rect[ key ] <= 1.5;
+		} ) && rect.width > 0 && rect.height > 0;
+	}
+
+	function savedProfile( measurement ) {
+		if ( ! measurement || ! measurement.profile || ! validRect( measurement.profile.media ) || ! Array.isArray( measurement.profile.lines ) ) {
+			return null;
+		}
+
+		var lines = measurement.profile.lines.filter( validRect ).slice( 0, 4 );
+		return { media: measurement.profile.media, lines: lines };
+	}
+
+	function relativeRect( rect, parentRect ) {
+		return {
+			left: ( rect.left - parentRect.left ) / parentRect.width,
+			top: ( rect.top - parentRect.top ) / parentRect.height,
+			width: rect.width / parentRect.width,
+			height: rect.height / parentRect.height
+		};
+	}
+
+	function visibleRect( element ) {
+		var rect = element.getBoundingClientRect();
+		return rect.width > 8 && rect.height > 8 ? rect : null;
+	}
+
+	function cardProfile( card ) {
+		var cardRect = visibleRect( card );
+		if ( ! cardRect ) {
+			return null;
+		}
+
+		var mediaElement = null;
+		var mediaRect = null;
+		Array.prototype.forEach.call( card.querySelectorAll( 'img, video, [style*="background"]' ), function ( element ) {
+			var rect = visibleRect( element );
+			if ( ! rect || ( mediaRect && rect.width * rect.height <= mediaRect.width * mediaRect.height ) ) {
+				return;
+			}
+
+			mediaElement = element;
+			mediaRect = rect;
+		} );
+
+		if ( ! mediaElement || ! mediaRect || mediaRect.width * mediaRect.height < cardRect.width * cardRect.height * 0.1 ) {
+			return null;
+		}
+
+		var textBlocks = [];
+		Array.prototype.forEach.call( card.querySelectorAll( 'h1, h2, h3, h4, h5, h6, p, a, span, div' ), function ( element ) {
+			var text = element.textContent.trim();
+			var rect = visibleRect( element );
+			var childHasText = Array.prototype.some.call( element.children, function ( child ) {
+				return child.textContent.trim().length > 0;
+			} );
+
+			if ( ! text || text.length > 160 || ! rect || childHasText || mediaElement.contains( element ) || rect.top < mediaRect.bottom - 4 || rect.height > 80 ) {
+				return;
+			}
+
+			var relative = relativeRect( rect, cardRect );
+			if ( relative.width < 0.06 || relative.height < 0.01 ) {
+				return;
+			}
+
+			var duplicate = textBlocks.some( function ( block ) {
+				return Math.abs( block.left - relative.left ) < 0.02 && Math.abs( block.top - relative.top ) < 0.02 && Math.abs( block.width - relative.width ) < 0.02;
+			} );
+			if ( ! duplicate ) {
+				textBlocks.push( relative );
+			}
+		} );
+
+		textBlocks.sort( function ( first, second ) {
+			return first.top === second.top ? first.left - second.left : first.top - second.top;
+		} );
+
+		return {
+			media: relativeRect( mediaRect, cardRect ),
+			lines: textBlocks.slice( 0, 4 )
+		};
 	}
 
 	function rememberCardSize( wrapper, grid ) {
@@ -97,15 +182,17 @@
 			return;
 		}
 
+		var profile = cardProfile( cards[ 0 ] );
 		try {
-			sessionStorage.setItem( storageKey( wrapper ), JSON.stringify( { ratio: tallest / widest } ) );
+			sessionStorage.setItem( storageKey( wrapper ), JSON.stringify( { ratio: tallest / widest, profile: profile } ) );
 		} catch ( error ) {
 			// Private mode or a blocked storage policy only disables this enhancement.
 		}
 	}
 
 	function applySavedSize( wrapper, skeleton ) {
-		var ratio = savedRatio( wrapper );
+		var measurement = savedMeasurement( wrapper );
+		var ratio = measurement && Number.isFinite( measurement.ratio ) && measurement.ratio > 0 ? measurement.ratio : 0;
 		if ( ! ratio ) {
 			return;
 		}
@@ -123,10 +210,31 @@
 		} );
 	}
 
+	function profileCard( profile ) {
+		var card = document.createElement( 'div' );
+		card.className = 'wcs-jetengine-skeleton__card wcs-jetengine-skeleton__card--profiled';
+
+		var media = document.createElement( 'span' );
+		media.className = 'wcs-jetengine-skeleton__media';
+		media.style.cssText = 'left:' + profile.media.left * 100 + '%;top:' + profile.media.top * 100 + '%;width:' + profile.media.width * 100 + '%;height:' + profile.media.height * 100 + '%;';
+		card.appendChild( media );
+
+		profile.lines.forEach( function ( block ) {
+			var line = document.createElement( 'span' );
+			line.className = 'wcs-jetengine-skeleton__line';
+			line.style.cssText = 'left:' + block.left * 100 + '%;top:' + block.top * 100 + '%;width:' + block.width * 100 + '%;height:' + block.height * 100 + '%;margin:0;';
+			card.appendChild( line );
+		} );
+
+		return card;
+	}
+
 	function createSkeleton( wrapper, grid ) {
 		var count = columns( wrapper, grid );
 		var cardCount = Math.min( 12, count * 2 );
 		var scrollSettings = scroll( wrapper, count );
+		var measurement = savedMeasurement( wrapper );
+		var profile = savedProfile( measurement );
 		var skeleton = document.createElement( 'div' );
 
 		skeleton.className = 'wcs-jetengine-skeleton';
@@ -142,9 +250,11 @@
 		}
 
 		for ( var index = 0; index < cardCount; index++ ) {
-			var card = document.createElement( 'div' );
-			card.className = 'wcs-jetengine-skeleton__card';
-			card.innerHTML = '<span class="wcs-jetengine-skeleton__media"></span><span class="wcs-jetengine-skeleton__line"></span><span class="wcs-jetengine-skeleton__line wcs-jetengine-skeleton__line--short"></span><span class="wcs-jetengine-skeleton__pills"></span>';
+			var card = profile ? profileCard( profile ) : document.createElement( 'div' );
+			if ( ! profile ) {
+				card.className = 'wcs-jetengine-skeleton__card';
+				card.innerHTML = '<span class="wcs-jetengine-skeleton__media"></span><span class="wcs-jetengine-skeleton__line"></span><span class="wcs-jetengine-skeleton__line wcs-jetengine-skeleton__line--short"></span><span class="wcs-jetengine-skeleton__pills"></span>';
+			}
 			skeleton.appendChild( card );
 		}
 
