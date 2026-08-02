@@ -2,7 +2,7 @@
 /**
  * Plugin Name: WCS JetEngine Skeleton Loader
  * Description: Добавляет опциональный скелетон-загрузчик карточек в Listing Grid JetEngine для Elementor.
- * Version: 1.1.0
+ * Version: 1.1.1
  * Requires at least: 6.0
  * Requires PHP: 7.2
  * Author: WebCreative Studio
@@ -14,7 +14,7 @@ defined( 'ABSPATH' ) || exit;
 
 final class WCS_JetEngine_Skeleton_Loader {
 
-	const VERSION = '1.1.0';
+	const VERSION = '1.1.1';
 	const PLUGIN_SLUG = 'wcs-jetengine-skeleton-loader';
 	const UPDATE_MANIFEST_URL = 'https://web-creative.studio/wcs-plugins-update/wcs-jetengine-skeleton-loader/metadata.json';
 	const UPDATE_CACHE_KEY = 'wcs_jetengine_skeleton_update_manifest';
@@ -104,16 +104,6 @@ final class WCS_JetEngine_Skeleton_Loader {
 			'condition' => array( 'lazy_load' => 'yes' ),
 		) );
 
-		$element->add_control( 'wcs_skeleton_filters', array(
-			'label' => esc_html__( 'Показывать при фильтрации JetSmartFilters', 'wcs-jetengine-skeleton-loader' ),
-			'description' => esc_html__( 'Также показывать скелетон во время связанного запроса JetSmartFilters.', 'wcs-jetengine-skeleton-loader' ),
-			'type' => \Elementor\Controls_Manager::SWITCHER,
-			'label_on' => esc_html__( 'Вкл.', 'wcs-jetengine-skeleton-loader' ),
-			'label_off' => esc_html__( 'Выкл.', 'wcs-jetengine-skeleton-loader' ),
-			'return_value' => 'yes',
-			'default' => '',
-			'condition' => array( 'wcs_skeleton_loader' => 'yes' ),
-		) );
 	}
 
 	public function add_widget_attributes( $widget ) {
@@ -142,7 +132,6 @@ final class WCS_JetEngine_Skeleton_Loader {
 		$widget->add_render_attribute( '_wrapper', 'data-wcs-skeleton-scroll-gap-tablet', $this->get_dimension( $settings, 'horizontal_gap_tablet', '16px' ) );
 		$widget->add_render_attribute( '_wrapper', 'data-wcs-skeleton-scroll-gap-mobile', $this->get_dimension( $settings, 'horizontal_gap_mobile', '5px' ) );
 		$widget->add_render_attribute( '_wrapper', 'data-wcs-skeleton-carousel', ! empty( $settings['carousel_enabled'] ) && 'yes' === $settings['carousel_enabled'] ? 'yes' : 'no' );
-		$widget->add_render_attribute( '_wrapper', 'data-wcs-skeleton-filters', ! empty( $settings['wcs_skeleton_filters'] ) ? 'yes' : 'no' );
 	}
 
 	private function get_grid_columns( $settings, $key, $fallback ) {

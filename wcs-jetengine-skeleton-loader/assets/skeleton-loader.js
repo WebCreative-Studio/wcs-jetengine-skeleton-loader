@@ -5,10 +5,6 @@
 		return grid.classList.contains( 'jet-listing-grid--lazy-load' ) && ! grid.classList.contains( 'jet-listing-grid--lazy-load-completed' );
 	}
 
-	function isFiltering( wrapper ) {
-		return wrapper.dataset.wcsSkeletonFilters === 'yes' && !! document.querySelector( '.jet-filters-loading' );
-	}
-
 	function breakpoint() {
 		if ( matchMedia( '(max-width: 767px)' ).matches ) {
 			return 'mobile';
@@ -268,7 +264,7 @@
 			return;
 		}
 
-		var active = isLoading( grid ) || isFiltering( wrapper );
+		var active = isLoading( grid );
 		var existing = grid.querySelector( '.wcs-jetengine-skeleton' );
 
 		if ( ! active ) {
