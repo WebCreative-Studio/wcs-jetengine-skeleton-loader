@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630" role="img" aria-labelledby="title desc">
+  <title id="title">WCS JetEngine Skeleton Loader</title>
+  <desc id="desc">Editable vector title overlay for the release cover.</desc>
+  <rect x="64" y="220" width="510" height="190" rx="28" fill="#ffffff" fill-opacity=".9"/>
+  <text x="108" y="290" fill="#163d2b" font-family="Arial, sans-serif" font-size="34" font-weight="700">WCS</text>
+  <text x="108" y="342" fill="#163d2b" font-family="Arial, sans-serif" font-size="46" font-weight="700">JetEngine Skeleton</text>
+  <text x="108" y="386" fill="#388357" font-family="Arial, sans-serif" font-size="27">Loader for Elementor</text>
+</svg>
