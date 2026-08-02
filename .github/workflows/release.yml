@@ -1,0 +1,116 @@
+name: Release plugin
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  PLUGIN_SLUG: wcs-jetengine-skeleton-loader
+  PLUGIN_DIR: wcs-jetengine-skeleton-loader
+  PLUGIN_MAIN_FILE: wcs-jetengine-skeleton-loader/wcs-jetengine-skeleton-loader.php
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Resolve and validate version
+        id: version
+        shell: bash
+        run: |
+          set -euo pipefail
+          plugin_version="$(grep -E '^ \* Version:' "$PLUGIN_MAIN_FILE" | sed -E 's/^ \* Version:[[:space:]]*//')"
+          release_version="${GITHUB_REF_NAME#v}"
+          if [[ "$GITHUB_REF_TYPE" != 'tag' || ! "$release_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo 'Create a semantic version tag, for example v1.0.1.' >&2
+            exit 1
+          fi
+          if [[ "$plugin_version" != "$release_version" ]]; then
+            echo "Plugin version $plugin_version does not match tag $release_version." >&2
+            exit 1
+          fi
+          printf 'version=%s\ntag=%s\n' "$release_version" "$GITHUB_REF_NAME" >> "$GITHUB_OUTPUT"
+
+      - name: Build installation ZIP
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist/package
+          rsync -a --delete "$PLUGIN_DIR/" "dist/package/$PLUGIN_SLUG/"
+          (
+            cd dist/package
+            zip -qr "../$PLUGIN_SLUG-${{ steps.version.outputs.version }}.zip" "$PLUGIN_SLUG"
+          )
+
+      - name: Create update manifest
+        env:
+          UPDATE_SERVER_PUBLIC_BASE_URL: ${{ secrets.UPDATE_SERVER_PUBLIC_BASE_URL }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          base_url="${UPDATE_SERVER_PUBLIC_BASE_URL%/}"
+          test -n "$base_url"
+          cat > dist/metadata.json <<JSON
+          {
+            "slug": "$PLUGIN_SLUG",
+            "name": "WCS JetEngine Skeleton Loader",
+            "version": "${{ steps.version.outputs.version }}",
+            "download_url": "$base_url/$PLUGIN_SLUG/$PLUGIN_SLUG-${{ steps.version.outputs.version }}.zip",
+            "requires": "6.0",
+            "requires_php": "7.2",
+            "homepage": "https://github.com/${{ github.repository }}",
+            "description": "Опциональный скелетон-загрузчик для JetEngine Listing Grid в Elementor.",
+            "changelog": "Релиз ${{ steps.version.outputs.tag }}"
+          }
+          JSON
+
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          zip_file="dist/$PLUGIN_SLUG-${{ steps.version.outputs.version }}.zip"
+          if gh release view "${{ steps.version.outputs.tag }}" >/dev/null 2>&1; then
+            gh release upload "${{ steps.version.outputs.tag }}" "$zip_file" dist/metadata.json --clobber
+          else
+            gh release create "${{ steps.version.outputs.tag }}" "$zip_file" dist/metadata.json --target "$GITHUB_SHA" --title "${{ steps.version.outputs.tag }}" --notes "Release ${{ steps.version.outputs.tag }}"
+          fi
+
+      - name: Install SSH upload tools
+        run: sudo apt-get update && sudo apt-get install -y sshpass
+
+      - name: Configure update-server host key
+        env:
+          UPDATE_SERVER_HOST: ${{ secrets.UPDATE_SERVER_HOST }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$UPDATE_SERVER_HOST"
+          mkdir -p ~/.ssh
+          ssh-keyscan -H "$UPDATE_SERVER_HOST" >> ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/known_hosts
+
+      - name: Deploy release to update server
+        env:
+          SSHPASS: ${{ secrets.UPDATE_SERVER_PASSWORD }}
+          UPDATE_SERVER_HOST: ${{ secrets.UPDATE_SERVER_HOST }}
+          UPDATE_SERVER_USER: ${{ secrets.UPDATE_SERVER_USER }}
+          UPDATE_SERVER_PATH: ${{ secrets.UPDATE_SERVER_PATH }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$SSHPASS" && test -n "$UPDATE_SERVER_HOST" && test -n "$UPDATE_SERVER_USER"
+          remote_root="${UPDATE_SERVER_PATH:-.}"
+          remote_dir="$remote_root/$PLUGIN_SLUG"
+          target="$UPDATE_SERVER_USER@$UPDATE_SERVER_HOST"
+          sshpass -e ssh -o StrictHostKeyChecking=yes "$target" "mkdir -p '$remote_dir'"
+          sshpass -e scp -o StrictHostKeyChecking=yes "dist/$PLUGIN_SLUG-${{ steps.version.outputs.version }}.zip" "$target:$remote_dir/$PLUGIN_SLUG-${{ steps.version.outputs.version }}.zip"
+          sshpass -e scp -o StrictHostKeyChecking=yes dist/metadata.json "$target:$remote_dir/metadata.json"
