@@ -8,3 +8,5 @@ if ( file_exists( $wcs_skeleton_bootstrap ) ) {
 		unlink( $wcs_skeleton_bootstrap );
 	}
 }
+
+delete_option( 'wcs_jetengine_skeleton_color' );

@@ -225,6 +225,15 @@
 		return card;
 	}
 
+	function applyColor( wrapper, skeleton ) {
+		var base = ( wrapper.dataset.wcsSkeletonBase || '' ).trim() || getComputedStyle( wrapper ).getPropertyValue( '--wcs-skeleton-base' ).trim();
+		if ( ! base ) {
+			return;
+		}
+
+		skeleton.style.setProperty( '--wcs-skeleton-base', base );
+	}
+
 	function createSkeleton( wrapper, grid ) {
 		var count = columns( wrapper, grid );
 		var cardCount = Math.min( 12, count * 2 );
@@ -236,6 +245,7 @@
 		skeleton.className = 'wcs-jetengine-skeleton';
 		skeleton.setAttribute( 'aria-hidden', 'true' );
 		skeleton.style.gridTemplateColumns = 'repeat(' + count + ', minmax(0, 1fr))';
+		applyColor( wrapper, skeleton );
 
 		if ( scrollSettings ) {
 			skeleton.classList.add( 'wcs-jetengine-skeleton--scroll' );

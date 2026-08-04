@@ -2,7 +2,7 @@
 /**
  * Plugin Name: WCS JetEngine Skeleton Loader
  * Description: Добавляет опциональный скелетон-загрузчик карточек в Listing Grid JetEngine для Elementor.
- * Version: 1.2.0
+ * Version: 1.3.3
  * Requires at least: 6.0
  * Requires PHP: 7.2
  * Author: WebCreative Studio
@@ -14,21 +14,22 @@ defined( 'ABSPATH' ) || exit;
 
 final class WCS_JetEngine_Skeleton_Loader {
 
-	const VERSION = '1.2.0';
+	const VERSION = '1.3.3';
 	const PLUGIN_SLUG = 'wcs-jetengine-skeleton-loader';
 	const UPDATE_MANIFEST_URL = 'https://web-creative.studio/wcs-plugins-update/wcs-jetengine-skeleton-loader/metadata.json';
 	const UPDATE_CACHE_KEY = 'wcs_jetengine_skeleton_update_manifest';
 	const COLOR_OPTION = 'wcs_jetengine_skeleton_color';
+	const COLOR_CONTROL = 'wcs_skeleton_color';
 	const DEFAULT_COLOR = '#edf5ef';
 	const BOOTSTRAP_FILE = 'wcs-jetengine-skeleton-loader-bootstrap.php';
 	const BOOTSTRAP_MARKER = 'WCS_JETENGINE_SKELETON_LOADER_BOOTSTRAP';
 
 	public function __construct() {
 		// JetEngine registers Elementor controls before ordinary plugins load.
-		add_action( 'jet-engine/listing/after-general-settings', array( $this, 'register_controls' ), 10, 1 );
+		add_action( 'jet-engine/listing/after-general-settings', array( $this, 'register_content_controls' ), 10, 1 );
+		// Style section must start only after Content section_general is closed.
+		add_action( 'elementor/element/jet-listing-grid/section_general/after_section_end', array( $this, 'register_style_controls' ) );
 		add_action( 'plugins_loaded', array( $this, 'bootstrap' ) );
-		add_action( 'admin_init', array( $this, 'register_settings' ) );
-		add_action( 'admin_menu', array( $this, 'register_settings_page' ) );
 	}
 
 	public static function activate() {
@@ -96,53 +97,81 @@ final class WCS_JetEngine_Skeleton_Loader {
 		}
 	}
 
-	public function register_settings() {
-		register_setting( 'wcs_jetengine_skeleton_settings', self::COLOR_OPTION, array(
-			'sanitize_callback' => array( $this, 'sanitize_color' ),
-			'default' => self::DEFAULT_COLOR,
-		) );
-
-		add_settings_section( 'wcs_jetengine_skeleton_appearance', esc_html__( 'Внешний вид скелетона', 'wcs-jetengine-skeleton-loader' ), '__return_false', 'wcs-jetengine-skeleton-loader' );
-		add_settings_field( self::COLOR_OPTION, esc_html__( 'Основной цвет', 'wcs-jetengine-skeleton-loader' ), array( $this, 'render_color_field' ), 'wcs-jetengine-skeleton-loader', 'wcs_jetengine_skeleton_appearance' );
-	}
-
-	public function register_settings_page() {
-		add_options_page( esc_html__( 'Скелетон-загрузчик', 'wcs-jetengine-skeleton-loader' ), esc_html__( 'Скелетон-загрузчик', 'wcs-jetengine-skeleton-loader' ), 'manage_options', 'wcs-jetengine-skeleton-loader', array( $this, 'render_settings_page' ) );
-	}
-
-	public function render_settings_page() {
-		if ( ! current_user_can( 'manage_options' ) ) {
-			return;
-		}
-		?>
-		<div class="wrap">
-			<h1><?php echo esc_html__( 'Скелетон-загрузчик JetEngine', 'wcs-jetengine-skeleton-loader' ); ?></h1>
-			<form action="options.php" method="post">
-				<?php settings_fields( 'wcs_jetengine_skeleton_settings' ); ?>
-				<?php do_settings_sections( 'wcs-jetengine-skeleton-loader' ); ?>
-				<?php submit_button(); ?>
-			</form>
-		</div>
-		<?php
-	}
-
-	public function render_color_field() {
-		$value = $this->get_color();
-		printf( '<input type="color" name="%1$s" value="%2$s" /> <code>%2$s</code><p class="description">%3$s</p>', esc_attr( self::COLOR_OPTION ), esc_attr( $value ), esc_html__( 'Единый основной цвет скелетонов для этого сайта. Блик и тонкая рамка подбираются автоматически.', 'wcs-jetengine-skeleton-loader' ) );
-	}
-
+	/**
+	 * Normalize a color from Elementor/settings for safe CSS use.
+	 * Accepts #RGB, #RRGGBB, #RRGGBBAA, rgb()/rgba(), and Elementor global CSS variables.
+	 *
+	 * @param mixed $color Raw color value.
+	 * @return string Sanitized CSS color or empty string when invalid.
+	 */
 	public function sanitize_color( $color ) {
-		$color = sanitize_hex_color( $color );
-		return $color ? $color : self::DEFAULT_COLOR;
+		$color = trim( wp_unslash( (string) $color ) );
+		if ( '' === $color ) {
+			return '';
+		}
+
+		$hex = sanitize_hex_color( $color );
+		if ( $hex ) {
+			return $hex;
+		}
+
+		// Elementor color picker often stores 8-digit hex with alpha: #RRGGBBAA.
+		if ( preg_match( '/^#([A-Fa-f0-9]{8})$/', $color, $matches ) ) {
+			return '#' . strtolower( $matches[1] );
+		}
+
+		if ( preg_match( '/^var\(--e-global-color-[a-zA-Z0-9_-]+\)$/', $color ) ) {
+			return $color;
+		}
+
+		if ( preg_match( '/^rgba?\(\s*[\d.]+\s*(%?)(?:\s*,\s*|\s+)[\d.]+\s*(%?)(?:\s*,\s*|\s+)[\d.]+\s*(%?)(?:\s*[,\/]\s*[\d.]+%?\s*)?\)$/i', $color ) ) {
+			return preg_replace( '/\s+/', ' ', $color );
+		}
+
+		return '';
 	}
 
-	private function get_color() {
-		return $this->sanitize_color( get_option( self::COLOR_OPTION, self::DEFAULT_COLOR ) );
+	/**
+	 * Resolve skeleton color for a widget: Elementor Style control, then legacy site option, then default.
+	 *
+	 * @param array<string,mixed> $settings Widget settings.
+	 */
+	private function get_widget_color( $settings ) {
+		if ( ! empty( $settings[ self::COLOR_CONTROL ] ) ) {
+			$color = $this->sanitize_color( $settings[ self::COLOR_CONTROL ] );
+			if ( '' !== $color ) {
+				return $color;
+			}
+		}
+
+		$legacy = $this->sanitize_color( get_option( self::COLOR_OPTION, self::DEFAULT_COLOR ) );
+		return '' !== $legacy ? $legacy : self::DEFAULT_COLOR;
+	}
+
+	/**
+	 * Extract an #RRGGBB value suitable for PHP blending.
+	 *
+	 * @param string $color Sanitized CSS color.
+	 * @return string Hex RGB without alpha, or empty string when blending is not possible.
+	 */
+	private function rgb_hex_for_blend( $color ) {
+		$color = $this->sanitize_color( $color );
+		if ( preg_match( '/^#([A-Fa-f0-9]{6})([A-Fa-f0-9]{2})?$/', $color, $matches ) ) {
+			return '#' . strtolower( $matches[1] );
+		}
+		if ( preg_match( '/^#([A-Fa-f0-9]{3})$/', $color, $matches ) ) {
+			$short = strtolower( $matches[1] );
+			return '#' . $short[0] . $short[0] . $short[1] . $short[1] . $short[2] . $short[2];
+		}
+		return '';
 	}
 
 	private function blend_color( $base, $target, $amount ) {
-		$base = ltrim( $this->sanitize_color( $base ), '#' );
-		$target = ltrim( $this->sanitize_color( '#' . ltrim( $target, '#' ) ), '#' );
+		$base = ltrim( $this->rgb_hex_for_blend( $base ), '#' );
+		$target = ltrim( $this->rgb_hex_for_blend( $target ), '#' );
+		if ( 6 !== strlen( $base ) || 6 !== strlen( $target ) ) {
+			return self::DEFAULT_COLOR;
+		}
 		$amount = min( 1, max( 0, (float) $amount ) );
 		$parts = array();
 		for ( $index = 0; $index < 3; $index++ ) {
@@ -154,7 +183,7 @@ final class WCS_JetEngine_Skeleton_Loader {
 		return '#' . implode( '', $parts );
 	}
 
-	public function register_controls( $element ) {
+	public function register_content_controls( $element ) {
 		$element->add_control( 'wcs_skeleton_loader', array(
 			'label' => esc_html__( 'Скелетон-загрузчик', 'wcs-jetengine-skeleton-loader' ),
 			'description' => esc_html__( 'Показывать карточки-заглушки, пока Listing Grid загружается.', 'wcs-jetengine-skeleton-loader' ),
@@ -165,7 +194,35 @@ final class WCS_JetEngine_Skeleton_Loader {
 			'default' => '',
 			'condition' => array( 'lazy_load' => 'yes' ),
 		) );
+	}
 
+	public function register_style_controls( $element ) {
+		$element->start_controls_section(
+			'wcs_skeleton_style_section',
+			array(
+				'label' => esc_html__( 'Скелетон-загрузчик', 'wcs-jetengine-skeleton-loader' ),
+				'tab' => \Elementor\Controls_Manager::TAB_STYLE,
+				'condition' => array(
+					'lazy_load' => 'yes',
+					'wcs_skeleton_loader' => 'yes',
+				),
+			)
+		);
+
+		$element->add_control(
+			self::COLOR_CONTROL,
+			array(
+				'label' => esc_html__( 'Основной цвет', 'wcs-jetengine-skeleton-loader' ),
+				'description' => esc_html__( 'Цвет скелетона для этого листинга. Блик и тонкая рамка подбираются автоматически. Если не задан, используется прежний цвет сайта или значение по умолчанию.', 'wcs-jetengine-skeleton-loader' ),
+				'type' => \Elementor\Controls_Manager::COLOR,
+				'default' => '',
+				'selectors' => array(
+					'{{WRAPPER}}' => '--wcs-skeleton-base: {{VALUE}};',
+				),
+			)
+		);
+
+		$element->end_controls_section();
 	}
 
 	public function add_widget_attributes( $widget ) {
@@ -182,6 +239,10 @@ final class WCS_JetEngine_Skeleton_Loader {
 		$mobile = $this->get_grid_columns( $settings, 'columns_mobile', $tablet );
 		$devices = isset( $settings['scroll_slider_on'] ) && is_array( $settings['scroll_slider_on'] ) ? $settings['scroll_slider_on'] : array();
 		$scroll = ! empty( $settings['scroll_slider_enabled'] ) && 'yes' === $settings['scroll_slider_enabled'];
+		$base = $this->get_widget_color( $settings );
+		$blend_base = $this->rgb_hex_for_blend( $base );
+		$highlight = $blend_base ? $this->blend_color( $blend_base, '#ffffff', 0.55 ) : '';
+		$border = $blend_base ? $this->blend_color( $blend_base, '#ffffff', 0.25 ) : '';
 
 		$widget->add_render_attribute( '_wrapper', 'class', 'wcs-jetengine-skeleton-enabled' );
 		$widget->add_render_attribute( '_wrapper', 'data-wcs-skeleton-columns-desktop', (string) $desktop );
@@ -194,6 +255,15 @@ final class WCS_JetEngine_Skeleton_Loader {
 		$widget->add_render_attribute( '_wrapper', 'data-wcs-skeleton-scroll-gap-tablet', $this->get_dimension( $settings, 'horizontal_gap_tablet', '16px' ) );
 		$widget->add_render_attribute( '_wrapper', 'data-wcs-skeleton-scroll-gap-mobile', $this->get_dimension( $settings, 'horizontal_gap_mobile', '5px' ) );
 		$widget->add_render_attribute( '_wrapper', 'data-wcs-skeleton-carousel', ! empty( $settings['carousel_enabled'] ) && 'yes' === $settings['carousel_enabled'] ? 'yes' : 'no' );
+		$widget->add_render_attribute( '_wrapper', 'data-wcs-skeleton-base', $base );
+		$style = '--wcs-skeleton-base:' . esc_attr( $base ) . ';';
+		if ( $highlight ) {
+			$style .= '--wcs-skeleton-highlight:' . esc_attr( $highlight ) . ';';
+		}
+		if ( $border ) {
+			$style .= '--wcs-skeleton-border:' . esc_attr( $border ) . ';';
+		}
+		$widget->add_render_attribute( '_wrapper', 'style', $style );
 	}
 
 	private function get_grid_columns( $settings, $key, $fallback ) {
@@ -214,9 +284,6 @@ final class WCS_JetEngine_Skeleton_Loader {
 		$path = plugin_dir_path( __FILE__ ) . 'assets/';
 		$url = plugin_dir_url( __FILE__ ) . 'assets/';
 		wp_enqueue_style( 'wcs-jetengine-skeleton-loader', $url . 'skeleton-loader.css', array(), self::VERSION );
-		$base = $this->get_color();
-		$inline_css = ':root{--wcs-skeleton-base:' . esc_attr( $base ) . ';--wcs-skeleton-highlight:' . esc_attr( $this->blend_color( $base, '#ffffff', 0.55 ) ) . ';--wcs-skeleton-border:' . esc_attr( $this->blend_color( $base, '#ffffff', 0.25 ) ) . ';}';
-		wp_add_inline_style( 'wcs-jetengine-skeleton-loader', $inline_css );
 		wp_enqueue_script( 'wcs-jetengine-skeleton-loader', $url . 'skeleton-loader.js', array(), self::VERSION, true );
 	}
 
