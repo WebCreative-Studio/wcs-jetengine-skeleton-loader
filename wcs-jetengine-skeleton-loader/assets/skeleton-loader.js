@@ -232,6 +232,15 @@
 		}
 
 		skeleton.style.setProperty( '--wcs-skeleton-base', base );
+
+		var highlight = getComputedStyle( wrapper ).getPropertyValue( '--wcs-skeleton-highlight' ).trim();
+		var border = getComputedStyle( wrapper ).getPropertyValue( '--wcs-skeleton-border' ).trim();
+		if ( highlight ) {
+			skeleton.style.setProperty( '--wcs-skeleton-highlight', highlight );
+		}
+		if ( border ) {
+			skeleton.style.setProperty( '--wcs-skeleton-border', border );
+		}
 	}
 
 	function createSkeleton( wrapper, grid ) {

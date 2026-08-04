@@ -2,7 +2,7 @@
 /**
  * Plugin Name: WCS JetEngine Skeleton Loader
  * Description: Добавляет опциональный скелетон-загрузчик карточек в Listing Grid JetEngine для Elementor.
- * Version: 1.3.3
+ * Version: 1.3.4
  * Requires at least: 6.0
  * Requires PHP: 7.2
  * Author: WebCreative Studio
@@ -14,7 +14,7 @@ defined( 'ABSPATH' ) || exit;
 
 final class WCS_JetEngine_Skeleton_Loader {
 
-	const VERSION = '1.3.3';
+	const VERSION = '1.3.4';
 	const PLUGIN_SLUG = 'wcs-jetengine-skeleton-loader';
 	const UPDATE_MANIFEST_URL = 'https://web-creative.studio/wcs-plugins-update/wcs-jetengine-skeleton-loader/metadata.json';
 	const UPDATE_CACHE_KEY = 'wcs_jetengine_skeleton_update_manifest';
@@ -112,7 +112,7 @@ final class WCS_JetEngine_Skeleton_Loader {
 
 		$hex = sanitize_hex_color( $color );
 		if ( $hex ) {
-			return $hex;
+			return strtolower( $hex );
 		}
 
 		// Elementor color picker often stores 8-digit hex with alpha: #RRGGBBAA.
@@ -124,7 +124,7 @@ final class WCS_JetEngine_Skeleton_Loader {
 			return $color;
 		}
 
-		if ( preg_match( '/^rgba?\(\s*[\d.]+\s*(%?)(?:\s*,\s*|\s+)[\d.]+\s*(%?)(?:\s*,\s*|\s+)[\d.]+\s*(%?)(?:\s*[,\/]\s*[\d.]+%?\s*)?\)$/i', $color ) ) {
+		if ( preg_match( '/^rgba?\(\s*[\d.]+%?(?:\s*,\s*|\s+)[\d.]+%?(?:\s*,\s*|\s+)[\d.]+%?(?:\s*[,\/]\s*[\d.]+%?\s*)?\)$/i', $color ) ) {
 			return preg_replace( '/\s+/', ' ', $color );
 		}
 
@@ -132,9 +132,79 @@ final class WCS_JetEngine_Skeleton_Loader {
 	}
 
 	/**
+	 * Parse a sanitized color into RGBA components.
+	 *
+	 * @param string $color Sanitized CSS color.
+	 * @return array{r:int,g:int,b:int,a:float}|null
+	 */
+	private function parse_rgba( $color ) {
+		$color = $this->sanitize_color( $color );
+		if ( '' === $color ) {
+			return null;
+		}
+
+		if ( preg_match( '/^#([a-f0-9]{3})$/i', $color, $matches ) ) {
+			$short = strtolower( $matches[1] );
+			return array(
+				'r' => hexdec( $short[0] . $short[0] ),
+				'g' => hexdec( $short[1] . $short[1] ),
+				'b' => hexdec( $short[2] . $short[2] ),
+				'a' => 1.0,
+			);
+		}
+
+		if ( preg_match( '/^#([a-f0-9]{6})([a-f0-9]{2})?$/i', $color, $matches ) ) {
+			$rgb = strtolower( $matches[1] );
+			$alpha = isset( $matches[2] ) ? hexdec( $matches[2] ) / 255 : 1.0;
+			return array(
+				'r' => hexdec( substr( $rgb, 0, 2 ) ),
+				'g' => hexdec( substr( $rgb, 2, 2 ) ),
+				'b' => hexdec( substr( $rgb, 4, 2 ) ),
+				'a' => $alpha,
+			);
+		}
+
+		if ( preg_match( '/^rgba?\(\s*([\d.]+)\s*,\s*([\d.]+)\s*,\s*([\d.]+)(?:\s*,\s*([\d.]+%?))?\s*\)$/i', $color, $matches ) ) {
+			$alpha = 1.0;
+			if ( isset( $matches[4] ) && '' !== $matches[4] ) {
+				$alpha = false !== strpos( $matches[4], '%' ) ? ( (float) $matches[4] ) / 100 : (float) $matches[4];
+			}
+			return array(
+				'r' => (int) round( (float) $matches[1] ),
+				'g' => (int) round( (float) $matches[2] ),
+				'b' => (int) round( (float) $matches[3] ),
+				'a' => max( 0, min( 1, $alpha ) ),
+			);
+		}
+
+		return null;
+	}
+
+	/**
+	 * Format RGBA components as a CSS color, preferring rgba() when alpha < 1.
+	 *
+	 * @param array{r:int,g:int,b:int,a:float} $rgba Parsed color.
+	 */
+	private function format_rgba( array $rgba ) {
+		$r = max( 0, min( 255, (int) $rgba['r'] ) );
+		$g = max( 0, min( 255, (int) $rgba['g'] ) );
+		$b = max( 0, min( 255, (int) $rgba['b'] ) );
+		$a = max( 0, min( 1, (float) $rgba['a'] ) );
+		if ( $a >= 0.999 ) {
+			return sprintf( '#%02x%02x%02x', $r, $g, $b );
+		}
+		$a_str = rtrim( rtrim( number_format( $a, 4, '.', '' ), '0' ), '.' );
+		if ( '' === $a_str || '.' === $a_str ) {
+			$a_str = '0';
+		}
+		return sprintf( 'rgba(%d,%d,%d,%s)', $r, $g, $b, $a_str );
+	}
+
+	/**
 	 * Resolve skeleton color for a widget: Elementor Style control, then legacy site option, then default.
 	 *
 	 * @param array<string,mixed> $settings Widget settings.
+	 * @return string Sanitized color, or empty string when an Elementor global binding should own the value.
 	 */
 	private function get_widget_color( $settings ) {
 		if ( ! empty( $settings[ self::COLOR_CONTROL ] ) ) {
@@ -144,43 +214,58 @@ final class WCS_JetEngine_Skeleton_Loader {
 			}
 		}
 
+		// Global color bindings are applied by Elementor selectors; do not override them with the legacy option.
+		if ( ! empty( $settings['__globals__'][ self::COLOR_CONTROL ] ) ) {
+			return '';
+		}
+
 		$legacy = $this->sanitize_color( get_option( self::COLOR_OPTION, self::DEFAULT_COLOR ) );
 		return '' !== $legacy ? $legacy : self::DEFAULT_COLOR;
 	}
 
 	/**
-	 * Extract an #RRGGBB value suitable for PHP blending.
+	 * Build CSS custom properties for base/highlight/border while preserving alpha.
 	 *
-	 * @param string $color Sanitized CSS color.
-	 * @return string Hex RGB without alpha, or empty string when blending is not possible.
+	 * @param string $color Sanitized widget color.
+	 * @return array{base:string,highlight:string,border:string}
 	 */
-	private function rgb_hex_for_blend( $color ) {
-		$color = $this->sanitize_color( $color );
-		if ( preg_match( '/^#([A-Fa-f0-9]{6})([A-Fa-f0-9]{2})?$/', $color, $matches ) ) {
-			return '#' . strtolower( $matches[1] );
+	private function skeleton_color_vars( $color ) {
+		$parsed = $this->parse_rgba( $color );
+		if ( null === $parsed ) {
+			// Global CSS variables and other non-parseable values: keep as-is and let CSS color-mix derive siblings.
+			return array(
+				'base' => $color,
+				'highlight' => '',
+				'border' => '',
+			);
 		}
-		if ( preg_match( '/^#([A-Fa-f0-9]{3})$/', $color, $matches ) ) {
-			$short = strtolower( $matches[1] );
-			return '#' . $short[0] . $short[0] . $short[1] . $short[1] . $short[2] . $short[2];
-		}
-		return '';
+
+		$base = $this->format_rgba( $parsed );
+		$highlight = $this->format_rgba( $this->blend_rgba_toward_white( $parsed, 0.55 ) );
+		$border = $this->format_rgba( $this->blend_rgba_toward_white( $parsed, 0.25 ) );
+
+		return array(
+			'base' => $base,
+			'highlight' => $highlight,
+			'border' => $border,
+		);
 	}
 
-	private function blend_color( $base, $target, $amount ) {
-		$base = ltrim( $this->rgb_hex_for_blend( $base ), '#' );
-		$target = ltrim( $this->rgb_hex_for_blend( $target ), '#' );
-		if ( 6 !== strlen( $base ) || 6 !== strlen( $target ) ) {
-			return self::DEFAULT_COLOR;
-		}
+	/**
+	 * Lighten RGB toward white and keep the original alpha channel.
+	 *
+	 * @param array{r:int,g:int,b:int,a:float} $rgba Parsed color.
+	 * @param float                             $amount 0..1 blend toward white.
+	 * @return array{r:int,g:int,b:int,a:float}
+	 */
+	private function blend_rgba_toward_white( array $rgba, $amount ) {
 		$amount = min( 1, max( 0, (float) $amount ) );
-		$parts = array();
-		for ( $index = 0; $index < 3; $index++ ) {
-			$offset = $index * 2;
-			$from = hexdec( substr( $base, $offset, 2 ) );
-			$to = hexdec( substr( $target, $offset, 2 ) );
-			$parts[] = str_pad( dechex( (int) round( $from + ( $to - $from ) * $amount ) ), 2, '0', STR_PAD_LEFT );
-		}
-		return '#' . implode( '', $parts );
+		return array(
+			'r' => (int) round( $rgba['r'] + ( 255 - $rgba['r'] ) * $amount ),
+			'g' => (int) round( $rgba['g'] + ( 255 - $rgba['g'] ) * $amount ),
+			'b' => (int) round( $rgba['b'] + ( 255 - $rgba['b'] ) * $amount ),
+			'a' => $rgba['a'],
+		);
 	}
 
 	public function register_content_controls( $element ) {
@@ -240,9 +325,6 @@ final class WCS_JetEngine_Skeleton_Loader {
 		$devices = isset( $settings['scroll_slider_on'] ) && is_array( $settings['scroll_slider_on'] ) ? $settings['scroll_slider_on'] : array();
 		$scroll = ! empty( $settings['scroll_slider_enabled'] ) && 'yes' === $settings['scroll_slider_enabled'];
 		$base = $this->get_widget_color( $settings );
-		$blend_base = $this->rgb_hex_for_blend( $base );
-		$highlight = $blend_base ? $this->blend_color( $blend_base, '#ffffff', 0.55 ) : '';
-		$border = $blend_base ? $this->blend_color( $blend_base, '#ffffff', 0.25 ) : '';
 
 		$widget->add_render_attribute( '_wrapper', 'class', 'wcs-jetengine-skeleton-enabled' );
 		$widget->add_render_attribute( '_wrapper', 'data-wcs-skeleton-columns-desktop', (string) $desktop );
@@ -255,15 +337,19 @@ final class WCS_JetEngine_Skeleton_Loader {
 		$widget->add_render_attribute( '_wrapper', 'data-wcs-skeleton-scroll-gap-tablet', $this->get_dimension( $settings, 'horizontal_gap_tablet', '16px' ) );
 		$widget->add_render_attribute( '_wrapper', 'data-wcs-skeleton-scroll-gap-mobile', $this->get_dimension( $settings, 'horizontal_gap_mobile', '5px' ) );
 		$widget->add_render_attribute( '_wrapper', 'data-wcs-skeleton-carousel', ! empty( $settings['carousel_enabled'] ) && 'yes' === $settings['carousel_enabled'] ? 'yes' : 'no' );
-		$widget->add_render_attribute( '_wrapper', 'data-wcs-skeleton-base', $base );
-		$style = '--wcs-skeleton-base:' . esc_attr( $base ) . ';';
-		if ( $highlight ) {
-			$style .= '--wcs-skeleton-highlight:' . esc_attr( $highlight ) . ';';
+
+		if ( '' !== $base ) {
+			$vars = $this->skeleton_color_vars( $base );
+			$widget->add_render_attribute( '_wrapper', 'data-wcs-skeleton-base', $vars['base'] );
+			$style = '--wcs-skeleton-base:' . esc_attr( $vars['base'] ) . ';';
+			if ( $vars['highlight'] ) {
+				$style .= '--wcs-skeleton-highlight:' . esc_attr( $vars['highlight'] ) . ';';
+			}
+			if ( $vars['border'] ) {
+				$style .= '--wcs-skeleton-border:' . esc_attr( $vars['border'] ) . ';';
+			}
+			$widget->add_render_attribute( '_wrapper', 'style', $style );
 		}
-		if ( $border ) {
-			$style .= '--wcs-skeleton-border:' . esc_attr( $border ) . ';';
-		}
-		$widget->add_render_attribute( '_wrapper', 'style', $style );
 	}
 
 	private function get_grid_columns( $settings, $key, $fallback ) {
